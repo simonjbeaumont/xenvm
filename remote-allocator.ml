@@ -89,6 +89,10 @@ let main socket config =
               let open Lvm.Result in
               (* expand the data volume with the segments *)
 debug "Expanding LV";
+              let vg, _ =
+                Lvm.Vg.do_op vg (Lvm.Redo.Op.(LvExpand(volume, { lvex_segments = segments }))
+                |> ok_or_failwith in
+(*
               let vg = update_lv (vg: Lvm.Vg.t) volume
                 (fun lv ->
                   let open Lvm in
@@ -104,6 +108,7 @@ debug "Expanding LV";
                   |> List.rev in
                   return  { lv with segments }
                 ) |> ok_or_failwith in
+*)
 debug "OK";
               let free = (List.assoc host config.Config.hosts).Config.free in
               (* remove the segments from the free volume *)
