@@ -67,7 +67,7 @@ let main socket config =
       Vg_IO.write vg >>|= fun _ ->
       return () in
 
-    let update_lv'' (vg: Lvm.Vg.t) name f =
+    let update_lv (vg: Lvm.Vg.t) name f =
       let open Lvm.Result in
       match List.partition (fun lv -> lv.Lvm.Lv.name = name) vg.Lvm.Vg.lvs with
       | [ lv ], others ->
@@ -88,16 +88,35 @@ let main socket config =
             let expand (vg: Lvm.Vg.t) (host, { ExpandVolume.volume; segments }) : Lvm.Vg.t =
               let open Lvm.Result in
               (* expand the data volume with the segments *)
-              let vg, _ =
-                Lvm.Vg.do_op vg (Lvm.Redo.Op.(LvExpand(volume, { lvex_segments = segments })))
-                |> ok_or_failwith in
+debug "Expanding LV";
+              let vg = update_lv (vg: Lvm.Vg.t) volume
+                (fun lv ->
+                  let open Lvm in
+                  let segments =
+                     Lv.Segment.sort (segments @ lv.Lv.segments)
+                  |> List.fold_left (fun (last_start, acc) segment ->
+                     (* Check if the segments are identical *)
+                     if segment.Lv.Segment.start_extent = last_start
+                     then last_start, acc
+                     else segment.Lv.Segment.start_extent, segment :: acc
+                     ) (-1L, [])
+                  |> snd
+                  |> List.rev in
+                  return  { lv with segments }
+                ) |> ok_or_failwith in
+debug "OK";
               let free = (List.assoc host config.Config.hosts).Config.free in
               (* remove the segments from the free volume *)
-              update_lv'' (vg: Lvm.Vg.t) free
+              update_lv (vg: Lvm.Vg.t) free
                 (fun lv ->
                   let current = Lvm.Lv.to_allocation lv in
+debug "Free LV has: %s" (Sexplib.Sexp.to_string_hum (Lvm.Pv.Allocator.sexp_of_t current));
                   let allocated = List.fold_left Lvm.Pv.Allocator.merge [] (List.map Lvm.Lv.Segment.to_allocation segments) in
+debug "Just allocated: %s" (Sexplib.Sexp.to_string_hum (Lvm.Pv.Allocator.sexp_of_t allocated));
+
                   let reduced = Lvm.Pv.Allocator.sub current allocated in
+debug "Free LV will have: %s" (Sexplib.Sexp.to_string_hum (Lvm.Pv.Allocator.sexp_of_t reduced));
+
                   let segments = Lvm.Lv.Segment.linear 0L reduced in
                   return { lv with Lvm.Lv.segments }
                 ) |> ok_or_failwith in
