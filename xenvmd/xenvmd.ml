@@ -10,19 +10,12 @@ let (>>*=) m f = match m with
   | `Ok x -> f x
 
 module Config = struct
-  type host = {
-    to_lvm: string; (* where to read changes to be written to LVM from *)
-    from_lvm: string; (* where to write changes from LVM to *)
-    free: string; (* name of the free block LV *)
-  } with sexp
-
   type t = {
     listenPort: int; (* TCP port number to listen on *)
     host_allocation_quantum: int64; (* amount of allocate each host at a time (MiB) *)
     host_low_water_mark: int64; (* when the free memory drops below, we allocate (MiB) *)
     vg: string; (* name of the volume group *)
     devices: string list; (* physical device containing the volume group *)
-    hosts: (string * host) list; (* host id -> rings *)
     master_journal: string; (* path to the SRmaster journal *)
   } with sexp
 end
@@ -162,6 +155,23 @@ module Impl = struct
       >>= fun () ->
       exit 0 in
     return ()
+
+  let to_LVMs = ref []
+  let from_LVMs = ref []
+  let free_LVs = ref []
+
+  let register context host =
+    let open Xenvm_interface in
+    info "Registering host %s" host.name;
+    ToLVM.start host.toLVM
+    >>= fun to_LVM ->
+    FromLVM.start host.fromLVM
+    >>= fun from_LVM ->
+    to_LVMs := (host.name, to_LVM) :: !to_LVMs;
+    from_LVMs := (host.name, from_LVM) :: !from_LVMs;
+    free_LVs := (host.name, host.freeLV) :: !free_LVs;
+    return ()
+
 end
 
 module XenvmServer = Xenvm_interface.ServerM(Impl)
@@ -184,16 +194,6 @@ let run port config daemon =
 debug "reading sector size";
     Device.read_sector_size config.Config.devices
     >>= fun sector_size ->
-debug "starting to_LVM";
-    let to_LVMs = List.map (fun (host, { Config.to_lvm }) ->
-      host, ToLVM.start to_lvm
-    ) config.Config.hosts in
-debug "starting from_LVM";
-    let from_LVMs = Lwt_list.map_s (fun (host, { Config.from_lvm }) ->
-      FromLVM.start from_lvm
-      >>= fun from_lvm ->
-      return (host, from_lvm)
-    ) config.Config.hosts in
 
     let perform t =
       let open Op in
@@ -206,16 +206,15 @@ debug "starting from_LVM";
             Lvm.Vg.do_op vg (Lvm.Redo.Op.(LvExpand(volume, { lvex_segments = segments })))
           ) >>= fun () ->
           Impl.write (fun vg ->
-            let free = (List.assoc host config.Config.hosts).Config.free in
+            let free = (List.assoc host !Impl.free_LVs) in
             Lvm.Vg.do_op vg (Lvm.Redo.Op.(LvCrop(free, { lvc_segments = segments })))
           )
         ) expands
       | FreeAllocation (host, allocation) ->
-        from_LVMs >>= fun from_LVMs ->
-        let q = try Some(List.assoc host from_LVMs) with Not_found -> None in
-        let host' = try Some(List.assoc host config.Config.hosts) with Not_found -> None in
+        let q = try Some(List.assoc host !Impl.from_LVMs) with Not_found -> None in
+        let host' = try Some(List.assoc host !Impl.free_LVs) with Not_found -> None in
         begin match q, host' with
-        | Some from_lvm, Some { free }  ->
+        | Some from_lvm, Some free  ->
           Impl.write
             (fun vg ->
                match List.partition (fun lv -> lv.Lvm.Lv.name=free) vg.lvs with
@@ -257,7 +256,7 @@ debug "starting from_LVM";
         let extent_size_mib = Int64.(div (mul extent_size (of_int sector_size)) (mul 1024L 1024L)) in
         (* XXX: avoid double-allocating the same free blocks *)
         Lwt_list.iter_s
-         (fun (host, { Config.free }) ->
+         (fun (host, free) ->
            match try Some(List.find (fun lv -> lv.Lvm.Lv.name = free) x.Lvm.Vg.lvs) with _ -> None with
            | Some lv ->
              let size_mib = Int64.mul (Lvm.Lv.size_in_extents lv) extent_size_mib in
@@ -282,7 +281,7 @@ debug "starting from_LVM";
            | None ->
              error "Failed to find host %s free LV %s" host free;
              return ()
-         ) config.Config.hosts in
+         ) !Impl.free_LVs in
 
     let rec service_queues () =
       (* 1. Do any of the host free LVs need topping up? *)
@@ -291,12 +290,11 @@ debug "starting from_LVM";
 
       (* 2. Are there any pending LVM updates from hosts? *)
       Lwt_list.map_p
-        (fun (host, t) ->
-          t >>= fun to_lvm ->
+        (fun (host, to_lvm) ->
           ToLVM.pop to_lvm
           >>= fun (pos, item) ->
           return (host, to_lvm, pos, item)
-        ) to_LVMs
+        ) !Impl.to_LVMs
       >>= fun work ->
       let items = List.concat (List.map (fun (_, _, _, bu) -> bu) work) in
       if items = [] then begin
