@@ -23,5 +23,4 @@ dd if=/dev/urandom of=djstest-LVMjournal bs=1M count=4
 ./xenvm.native benchmark
 
 echo Run 'sudo ./local-allocator.native' and type 'djstest-live' to request an allocation
-echo Run 'sudo ./remote-allocator.native' to see the LVM updates being picked up
 echo Run './cleanup.sh' to remove all volumes and devices

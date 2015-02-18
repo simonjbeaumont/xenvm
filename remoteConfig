@@ -1,4 +1,5 @@
 (
+ (listenPort 4000)
  (host_allocation_quantum 128)
  (host_low_water_mark 8)
  (master_journal ./djstest-masterJournal)
