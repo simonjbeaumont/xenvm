@@ -177,21 +177,23 @@ let run port config daemon =
   let config = Config.t_of_sexp (Sexplib.Sexp.load_sexp config) in
   let config = { config with Config.listenPort = match port with None -> config.Config.listenPort | Some x -> x } in
   debug "Loaded configuration: %s" (Sexplib.Sexp.to_string_hum (Config.sexp_of_t config));
+(*
   if daemon then Lwt_daemon.daemonize ();
+*)
   let t =
+debug "reading sector size";
     Device.read_sector_size config.Config.devices
     >>= fun sector_size ->
-
+debug "starting to_LVM";
     let to_LVMs = List.map (fun (host, { Config.to_lvm }) ->
       host, ToLVM.start to_lvm
     ) config.Config.hosts in
-
-    Lwt_list.map_s (fun (host, { Config.from_lvm }) ->
+debug "starting from_LVM";
+    let from_LVMs = Lwt_list.map_s (fun (host, { Config.from_lvm }) ->
       FromLVM.start from_lvm
       >>= fun from_lvm ->
       return (host, from_lvm)
-    ) config.Config.hosts
-    >>= fun from_LVMs ->
+    ) config.Config.hosts in
 
     let perform t =
       let open Op in
@@ -209,6 +211,7 @@ let run port config daemon =
           )
         ) expands
       | FreeAllocation (host, allocation) ->
+        from_LVMs >>= fun from_LVMs ->
         let q = try Some(List.assoc host from_LVMs) with Not_found -> None in
         let host' = try Some(List.assoc host config.Config.hosts) with Not_found -> None in
         begin match q, host' with
@@ -239,8 +242,7 @@ let run port config daemon =
       | `Ok x -> return x
       | `Error _ -> fail (Failure (Printf.sprintf "Failed to open the masterJournal: %s" config.Config.master_journal))
     ) >>= fun device ->
-    J.start device perform
-    >>= fun j ->
+    let j = J.start device perform in
 
     let top_up_free_volumes () =
       let module Disk = Disk_mirage.Make(Block)(Io_page) in
@@ -269,6 +271,7 @@ let run port config daemon =
                  (* try again later *)
                  return ()
                | `Ok allocated_extents ->
+                 j >>= fun j ->
                  J.push j (Op.FreeAllocation (host, allocated_extents))
                  >>= fun wait ->
                  (* The operation is now in the journal *)
@@ -302,6 +305,7 @@ let run port config daemon =
         >>= fun () ->
         service_queues ()
       end else begin
+        j >>= fun j ->
         J.push j (Op.BatchOfAllocations (List.concat (List.map (fun (host, _, _, bu) -> List.map (fun x -> host, x) bu) work)))
         >>= fun wait ->
         (* The operation is in the journal *)
