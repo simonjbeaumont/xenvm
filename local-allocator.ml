@@ -232,6 +232,11 @@ let main config socket journal freePool fromLVM toLVM =
     | `Ok disk ->
     ToLVM.attach ~disk ()
     >>= fun tolvm ->
+    (* Tell the server to send all the free blocks, in case we've forgotten *)
+    ToLVM.push tolvm ExpandVolume.ResendFreePool
+    >>= fun pos ->
+    ToLVM.advance tolvm pos
+    >>= fun () ->
 
     let extent_size = vg.extent_size in (* in sectors *)
     let extent_size_mib = Int64.(div (mul extent_size (of_int sector_size)) (mul 1024L 1024L)) in
@@ -267,13 +272,6 @@ let main config socket journal freePool fromLVM toLVM =
         loop_forever () in
       loop_forever () in
 
-    (* We can either cache the free blocks locally, or simply ask the remote
-       to tell us on startup: *)
-    let open Xenvm_client in
-    Rpc.uri := Printf.sprintf "http://%s:%d/" config.Config.remoteHost config.Config.remotePort;
-    Client.get_lv ~name:config.Config.freePool
-    >>= fun (_, lv) ->
-    FreePool.add (Lvm.Lv.to_allocation lv);
     let (_: unit Lwt.t) = receive_free_blocks_forever () in
 
     (* This is the idempotent part which will be done at-least-once *)
@@ -333,7 +331,7 @@ let main config socket journal freePool fromLVM toLVM =
                 >>= fun extents ->
                 let segments, targets = extend_volume vg data_volume extents in
                 let _, volume = Mapper.vg_lv_of_name device in
-                let volume = { ExpandVolume.volume; segments } in
+                let volume = ExpandVolume.Expand { ExpandVolume.volume; segments } in
                 let device = { ExpandDevice.extents; device; targets } in
                 J.push j { Op.volume; device }
                 >>= fun wait ->

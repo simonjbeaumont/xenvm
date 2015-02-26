@@ -246,7 +246,9 @@ module FreePool = struct
       type host = string with sexp
       type t =
         | FreeAllocation of (host * FreeAllocation.t)
-      (* Assign a block allocation to a host *)
+          (* Assign a block allocation to a host *)
+        | ResendFreePool of host
+          (* Send a free allocation to a host *)
       with sexp
     end
 
@@ -351,6 +353,27 @@ module FreePool = struct
            error "Failed to find host %s free LV %s" host free;
            return ()
        ) !VolumeManager.free_LVs
+
+  let resend_free_pool host = match !journal with
+    | None -> fatal_error_t "resend_free_pool: no journal"
+    | Some j ->
+      VolumeManager.read (fun vg ->
+        let op =
+          try
+            let name = List.assoc host !VolumeManager.free_LVs in
+            let lv = List.find (fun lv -> lv.Lvm.Lv.name = name) vg.Lvm.Vg.lvs in
+            Some (Lvm.Lv.to_allocation lv)
+          with _ ->
+            error "Failed to resend free pool to %s" host;
+            None in
+        match op with
+        | Some extents ->
+          J.push j (Op.FreeAllocation (host, extents))
+          >>= fun _ ->
+          return ()
+        | None ->
+          return ()
+      )
 end
 
 module Impl = struct
@@ -448,14 +471,20 @@ let run port config daemon =
         service_queues ()
       end else begin
         let allocations = List.concat (List.map (fun (host, _, _, bu) -> List.map (fun x -> host, x) bu) work) in
-        Lwt_list.iter_s (function (host, { ExpandVolume.volume; segments }) ->
-          VolumeManager.write (fun vg ->
-            Lvm.Vg.do_op vg (Lvm.Redo.Op.(LvExpand(volume, { lvex_segments = segments })))
-          ) >>= fun () ->
-          VolumeManager.write (fun vg ->
-            let free = (List.assoc host !VolumeManager.free_LVs) in
-            Lvm.Vg.do_op vg (Lvm.Redo.Op.(LvCrop(free, { lvc_segments = segments })))
-          )
+        Lwt_list.iter_s (function
+          | host, ExpandVolume.Expand { ExpandVolume.volume; segments } ->
+            VolumeManager.write (fun vg ->
+              Lvm.Vg.do_op vg (Lvm.Redo.Op.(LvExpand(volume, { lvex_segments = segments })))
+            ) >>= fun () ->
+            VolumeManager.write (fun vg ->
+              let free = (List.assoc host !VolumeManager.free_LVs) in
+              Lvm.Vg.do_op vg (Lvm.Redo.Op.(LvCrop(free, { lvc_segments = segments })))
+            )
+          | host, ExpandVolume.ResendFreePool ->
+            (* Hosts which have requested a resend are guaranteed to not be allocating
+               because they have forgotten all their free blocks. Therefore we have the
+               up-to-date copy and can safely retransmit. *)
+            FreePool.resend_free_pool host
         ) allocations
         >>= fun () ->
         (* The operation is in the journal *)
