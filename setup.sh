@@ -1,7 +1,7 @@
 #!/bin/bash
 set -ex
 
-ARTIFACT_DIR=./.test-artifacts
+ARTIFACT_DIR=$(pwd)/.test-artifacts
 
 XENVMD_SOCKET=$ARTIFACT_DIR/xenvmd.socket
 XENVMD_CONF=$ARTIFACT_DIR/xenvmd.conf
