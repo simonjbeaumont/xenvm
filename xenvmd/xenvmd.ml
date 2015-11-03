@@ -250,24 +250,37 @@ let daemonize config =
   end;
   Lwt_daemon.daemonize ()
   
-let main port sock_path config daemon log =
+let main port sock_path config_path daemon log watchdog =
   let open Config.Xenvmd in
   Sys.(set_signal sigterm (Signal_handle (fun _ -> exit (128+sigterm))));
-  let config = t_of_sexp (Sexplib.Sexp.load_sexp config) in
+  let config = t_of_sexp (Sexplib.Sexp.load_sexp config_path) in
   let config = { config with listenPort = match port with None -> config.listenPort | Some x -> Some x } in
   let config = { config with listenPath = match sock_path with None -> config.listenPath | Some x -> Some x } in
 
   Lwt_log.add_rule "*" Lwt_log.Debug;
 
-  let log_filename =
-    match log with
-    | Some f -> if Filename.is_relative f then (Some (Filename.concat (Unix.getcwd ()) f)) else (Some f)
-    | None -> None
-  in
+  if daemon && watchdog
+  then begin
+    (* Sanity check: daemon and watchdog implies that paths all have to be absolute *)
+    let fail_if_not_absolute (which,path) =
+      if Filename.is_relative path
+      then begin
+        Printf.fprintf stderr "When using watchdog and daemon mode, all paths must be absolute.\nThe '%s' path is relative: '%s'\n" which path;
+        exit 1
+      end
+    in
+    let paths = ["config",config_path] @
+                (match config.listenPath with Some x -> [ "listenPath", x] | None -> []) @
+                (match log with Some x -> [ "log", x] | None -> []) @
+                (List.map (fun dev -> ("config device", dev)) config.devices) in
+    List.iter fail_if_not_absolute paths
+  end;
 
   if daemon then daemonize config;
 
-  run port sock_path config log_filename
+  if watchdog
+  then Lwt_main.run (Watchdog.watchdog ())
+  else run port sock_path config log
     
 open Cmdliner
 
@@ -279,6 +292,10 @@ let info =
     `P "TODO";
   ] in
   Term.info "xenvm" ~version:"0.1-alpha" ~doc ~man
+
+let watchdog =
+  let doc = "Use a watchdog process to look after the daemon" in
+  Arg.(value & flag & info ["watchdog"] ~docv:"DAEMON" ~doc)
 
 let port =
   let doc = "TCP port of xenvmd server" in
@@ -306,7 +323,7 @@ let cmd =
     `S "EXAMPLES";
     `P "TODO";
   ] in
-  Term.(pure main $ port $ sock_path $ config $ daemon $ log),
+  Term.(pure main $ port $ sock_path $ config $ daemon $ log $ watchdog),
   Term.info "xenvmd" ~version:"0.1" ~doc ~man
 
 let _ =
