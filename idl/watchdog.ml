@@ -8,11 +8,9 @@ let restart_return_code = 123
 
 let fork_and_exec cmd args =
   match Lwt_unix.fork () with
-  | 0 ->
-    (* I'm the child *)
+  | 0 -> (* I'm the child *)
     Unix.execv cmd (Array.of_list args)
-  | n ->
-    n
+  | n -> n
 
 type action =
   | Exit of int (* Exit with this exit code *)
@@ -55,12 +53,11 @@ let watchdog () =
            Log.warn "watchdog: Received bad exit code %d" i
            >>= fun () ->
            let ctime = Unix.gettimeofday () in
-           if ctime < (!last_badexit +. no_retry_interval)
-           then begin
+           if ctime < (!last_badexit +. no_retry_interval) then
              Log.error "watchdog: Received 2 bad exits within no-retry-interval. Giving up."
              >>= fun () ->
              Lwt.return (Exit i)
-           end else begin
+           else begin
              last_badexit := ctime;
              Lwt.return Restart
            end
@@ -68,11 +65,11 @@ let watchdog () =
            Log.info "watchdog: Received signal %d" i
            >>= fun () ->
            let ctime = Unix.gettimeofday () in
-           if ctime < (!last_badsig +. no_retry_interval) then begin
+           if ctime < (!last_badsig +. no_retry_interval) then
              Log.error "watchdog: Received 2 bad signals within no-retry-interval. Giving up."
              >>= fun () ->
              Lwt.return (Exit (128 + i))
-           end else begin
+           else begin
              last_badsig := ctime;
              Lwt.return Restart
            end
@@ -104,7 +101,5 @@ let watchdog () =
     | Monitor pid -> loop (Some pid)
     | Restart -> loop None
     | Exit n -> exit n
-  in               
+  in
   loop None
-           
-          
