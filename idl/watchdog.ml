@@ -64,24 +64,22 @@ let watchdog () =
              last_badexit := ctime;
              Lwt.return Restart
            end
-         | Unix.WSIGNALED i ->
+         | Unix.WSIGNALED i when Sys.(i = sigsegv || i = sigpipe) ->
            Log.info "watchdog: Received signal %d" i
            >>= fun () ->
-           if i = Sys.sigsegv || i = Sys.sigpipe then begin
-             let ctime = Unix.gettimeofday () in
-             if ctime < (!last_badsig +. no_retry_interval) then begin
-               Log.error "watchdog: Received 2 bad signals within no-retry-interval. Giving up."
-               >>= fun () ->
-               Lwt.return (Exit 13)
-             end else begin
-               last_badsig := ctime;
-               Lwt.return Restart
-             end
-           end else begin
-             Log.error "watchdog: not restarting due to signal"
+           let ctime = Unix.gettimeofday () in
+           if ctime < (!last_badsig +. no_retry_interval) then begin
+             Log.error "watchdog: Received 2 bad signals within no-retry-interval. Giving up."
              >>= fun () ->
-             Lwt.return (Exit 12)
+             Lwt.return (Exit (128 + i))
+           end else begin
+             last_badsig := ctime;
+             Lwt.return Restart
            end
+         | Unix.WSIGNALED i ->
+             Log.error "watchdog: not restarting due to signal %d" i
+             >>= fun () ->
+             Lwt.return (Exit (128 + i))
          | Unix.WSTOPPED i ->
            Log.info "watchdog: received stop code %d" i
            >>= fun () ->
