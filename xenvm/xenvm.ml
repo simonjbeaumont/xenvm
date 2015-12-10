@@ -74,7 +74,9 @@ let format config name filenames =
       >>|= fun vg ->
       (return (Vg.create (Vg_IO.metadata_of vg) _journal_name size ~creation_host ~creation_time))
       >>|= fun (_, op) ->
-      Vg_IO.update vg [ op ]
+      (return (Vg.create (Vg_IO.metadata_of vg) _sanlock_lease_vg_name size ~creation_host ~creation_time))
+      >>|= fun (_, op') ->
+      Vg_IO.update vg [ op; op' ]
       >>|= fun () ->
       return () in
   Lwt_main.run t

@@ -5,6 +5,7 @@ exception HostStillConnecting of string
 exception UnknownFistPoint of string
 
 let _journal_name = "xenvm_journal"
+let _sanlock_lease_vg_name = "xenvm_sanlock_leases"
 
 external get_lv: name:string -> (Vg_wrapper.t * Lv_wrapper.t) = ""
 (** [get_lv lv] returns all the information you need to be able to map

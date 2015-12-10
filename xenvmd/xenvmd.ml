@@ -124,7 +124,19 @@ let maybe_write_pid config =
         exit 1
     end
 
-let run port sock_path config log_filename =
+let get_sanlock path =
+  debug "GETTING THE SANLOCK..." >>= fun () ->
+  let _start = Unix.gettimeofday () in
+  let offset = Sanlock.get_alignment path in
+  let lockspace = Sanlock.read_lockspace path in
+  let host_id = Random.int 2000 in
+  let _ = Sanlock.add_lockspace lockspace host_id in
+  let resource = Sanlock.read_resource ~offset path in
+  let handle = Sanlock.register () in
+  Sanlock.acquire handle resource;
+  debug "I GOT THE SANLOCK!!!!" >>= return
+
+let run sanlock_path port sock_path config log_filename =
   let t =
     (match log_filename with
      | Some f ->
@@ -132,6 +144,12 @@ let run port sock_path config log_filename =
        Lwt_log.default := logger;
        Lwt.return ()
      | None -> Lwt.return ())
+    >>= fun () ->
+    (match sanlock_path with
+     | Some path ->
+       get_sanlock path
+     | None -> return ()
+    )
     >>= fun () ->
     maybe_write_pid config
     >>= fun () ->
@@ -249,13 +267,12 @@ let daemonize config =
     exit 0
   end;
   Lwt_daemon.daemonize ()
-  
-let main port sock_path config_path daemon log watchdog =
+
+let main port sock_path config_path daemon log watchdog sanlock_path =
   let open Config.Xenvmd in
   Sys.(set_signal sigterm (Signal_handle (fun _ -> exit (128+sigterm))));
   let config = t_of_sexp (Sexplib.Sexp.load_sexp config_path) in
-  let config = { config with listenPort = match port with None -> config.listenPort | Some x -> Some x } in
-  let config = { config with listenPath = match sock_path with None -> config.listenPath | Some x -> Some x } in
+  let config = { config with listenPort = match port with None -> config.listenPort | Some x -> Some x } in let config = { config with listenPath = match sock_path with None -> config.listenPath | Some x -> Some x } in
 
   Lwt_log.add_rule "*" Lwt_log.Debug;
 
@@ -280,7 +297,7 @@ let main port sock_path config_path daemon log watchdog =
 
   if watchdog
   then Lwt_main.run (Watchdog.watchdog ())
-  else run port sock_path config log
+  else run sanlock_path port sock_path config log
     
 open Cmdliner
 
@@ -296,6 +313,10 @@ let info =
 let watchdog =
   let doc = "Use a watchdog process to look after the daemon" in
   Arg.(value & flag & info ["watchdog"] ~docv:"DAEMON" ~doc)
+
+let sanlock_path =
+  let doc = "Block device or file to use as lock to acquire" in
+  Arg.(value & opt (some string) None & info [ "sanlock" ] ~docv:"SANLOCK" ~doc)
 
 let port =
   let doc = "TCP port of xenvmd server" in
@@ -323,7 +344,7 @@ let cmd =
     `S "EXAMPLES";
     `P "TODO";
   ] in
-  Term.(pure main $ port $ sock_path $ config $ daemon $ log $ watchdog),
+  Term.(pure main $ port $ sock_path $ config $ daemon $ log $ watchdog $ sanlock_path),
   Term.info "xenvmd" ~version:"0.1" ~doc ~man
 
 let _ =

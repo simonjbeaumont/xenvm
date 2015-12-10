@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: ee9005e9cd3e685e6bba5947ce145357)
+# DO NOT EDIT (digest: 208de4e2a0d815519c02afbab0d0bfbb)
 # Ignore VCS directories, you can use the same kind of rule outside
 # OASIS_START/STOP if you want to exclude directories that contains
 # useless stuff for the build process
@@ -51,6 +51,7 @@ true: annot, bin_annot
 <xenvmd/xenvmd.{native,byte}>: pkg_rpclib
 <xenvmd/xenvmd.{native,byte}>: pkg_rpclib.syntax
 <xenvmd/xenvmd.{native,byte}>: pkg_rrdd-plugin
+<xenvmd/xenvmd.{native,byte}>: pkg_sanlock
 <xenvmd/xenvmd.{native,byte}>: pkg_sexplib
 <xenvmd/xenvmd.{native,byte}>: pkg_sexplib.syntax
 <xenvmd/xenvmd.{native,byte}>: pkg_shared-block-ring
@@ -73,6 +74,7 @@ true: annot, bin_annot
 <xenvmd/*.ml{,i,y}>: pkg_rpclib
 <xenvmd/*.ml{,i,y}>: pkg_rpclib.syntax
 <xenvmd/*.ml{,i,y}>: pkg_rrdd-plugin
+<xenvmd/*.ml{,i,y}>: pkg_sanlock
 <xenvmd/*.ml{,i,y}>: pkg_sexplib
 <xenvmd/*.ml{,i,y}>: pkg_sexplib.syntax
 <xenvmd/*.ml{,i,y}>: pkg_shared-block-ring
